@@ -197,23 +197,99 @@ class Default(FactsBase):
         'display current-configuration | include sysname'
     ]
 
+    COMMANDS_RE_DICT = {
+        'display version': {
+                'general': [
+                    re.compile(r"^\s*Huawei Versatile Routing Platform Software\s*$"), # first one matches section start
+                    re.compile(r"^VRP \(R\) software, Version (?P<version>\d+\.\d+) \((?P<platform>\w+) (?P<version_main>\w+)\)$"),
+                    re.compile(r"^Patch Version (?P<version_patch>\w+)\)$"),
+                ],
+                'node': [
+                    re.compile(r"^\S+?(:?\((?P<node_type>\w+)\))?\s+(?P<node_id>\d+) : uptime is .*"), # first one matches section start
+                    re.compile(r"^(:?\d+\.\s+)?(?P<key>[^:]+):\s+(?P<value>.+)$"),
+                ],
+            }
+    }
+    EMPTY_LINE_RE = re.compile(r"^\s*$")
+
     def populate(self):
         """ Populate method """
 
         super(Default, self).populate()
 
         data = self.responses[0]
+        nodes_facts = dict()
+        node_facts = dict()
+        flags = {
+            'current_section': "",
+            'new_section': True,
+            'master_node_found': None,
+            'empty_lines': dict(),
+            'unmatched_section_line': dict(),
+            'unmatched_line': dict(),
+        }
+
         if data:
-            version = data.split("\n")
-            tmp_version = version[11:]
-            for item in tmp_version:
-                tmp_item = item.split()
-                if len(tmp_item) < 5:
-                    break
-                elif tmp_item[2] == ":":
-                    continue
-                tmp_key = tmp_item[1] + " " + tmp_item[2]
-                self.facts[tmp_key] = tmp_item[4]
+            version_lines = data.split("\n")
+            for line_index, line in enumerate(version_lines):
+                if self.EMPTY_LINE_RE.search(line):
+                    node_facts = dict()
+                    flags['new_section'] = True
+                    flags['current_section'] = ""
+                    flags['empty_lines'][line_index] = True
+                else:
+                    matched = False
+                    for section, regexes in self.COMMANDS_RE_DICT['display version'].items():
+                        if matched:
+                            break
+                        if flags['new_section']:
+                            match = regexes[0].search(line)
+                            if match:
+                                match_group_dict = match.groupdict()
+                                flags['current_section'] = section
+                                flags['new_section'] = False
+                                if line_index in flags['unmatched_section_line']:
+                                    del flags['unmatched_section_line'][line_index]
+                                matched = True
+                                if section == 'node':
+                                    node_facts['node_id'] = int(match_group_dict['node_id'])
+                                    nodes_facts[node_facts['node_id']] = node_facts
+                                    if 'node_type' in match_group_dict:
+                                        node_facts['node_type'] = match_group_dict['node_type']
+                                        if node_facts['node_type'] == "Master":
+                                            flags['master_node_found'] = node_facts['node_id']
+                            else:
+                                if line_index not in flags['unmatched_section_line']:
+                                    flags['unmatched_section_line'][line_index] = line
+
+                        else:
+                            for regex in regexes:
+                                if matched:
+                                    break
+                                match = regex.search(line)
+                                if match:
+                                    match_group_dict = match.groupdict()
+                                    flags['unmatched_line'][line_index] = None
+                                    if 'value' in match_group_dict:
+                                        if 'key' in match_group_dict:
+                                            # remove whitespaces
+                                            key = ' '.join(match_group_dict['key'].strip().split())
+                                            value = ' '.join(match_group_dict['value'].strip().split())
+                                            node_facts[key] = value
+                                    elif section == 'general':
+                                        self.facts.update(match_group_dict)
+                                    matched = True
+                                else:
+                                    if line_index not in flags['unmatched_line']:
+                                        flags['unmatched_line'][line_index] = line
+                            if line_index in flags['unmatched_line'] and flags['unmatched_line'][line_index] is None:
+                                del flags['unmatched_line'][line_index]
+
+        if flags['master_node_found']:
+            self.facts.update(nodes_facts[flags['master_node_found']])
+        else:
+            self.facts.update(nodes_facts[min(nodes_facts)])
+        self.facts['nodes'] = nodes_facts
 
         data = self.responses[1]
         if data:
