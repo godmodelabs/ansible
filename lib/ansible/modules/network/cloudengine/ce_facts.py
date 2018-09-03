@@ -208,6 +208,10 @@ class Default(FactsBase):
             tmp_version = version[11:]
             for item in tmp_version:
                 tmp_item = item.split()
+                if len(tmp_item) < 5:
+                    break
+                elif tmp_item[2] == ":":
+                    continue
                 tmp_key = tmp_item[1] + " " + tmp_item[2]
                 self.facts[tmp_key] = tmp_item[4]
 
