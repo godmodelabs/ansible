@@ -490,26 +490,31 @@ class Connection(ConnectionBase):
         '''
         errored_response = None
         is_error_message = False
+        response_str = response.decode("utf-8")
         for regex in self._terminal.terminal_stderr_re:
-            if regex.search(response):
-                is_error_message = True
+            try:
+                display.debug("response_str is: ", response_str)
+                if regex.search(response_str):
+                    is_error_message = True
 
-                # Check if error response ends with command prompt if not
-                # receive it buffered prompt
-                for regex in self._terminal.terminal_stdout_re:
-                    match = regex.search(response)
-                    if match:
-                        errored_response = response
-                        self._matched_pattern = regex.pattern
-                        self._matched_prompt = match.group()
-                        break
+                    # Check if error response ends with command prompt if not
+                    # receive it buffered prompt
+                    for regex in self._terminal.terminal_stdout_re:
+                        match = regex.search(response_str)
+                        if match:
+                            errored_response = response_str
+                            self._matched_pattern = regex.pattern
+                            self._matched_prompt = match.group().encode('utf-8')
+                            break
+            except TypeError:
+                raise
 
         if not is_error_message:
             for regex in self._terminal.terminal_stdout_re:
-                match = regex.search(response)
+                match = regex.search(response_str)
                 if match:
                     self._matched_pattern = regex.pattern
-                    self._matched_prompt = match.group()
+                    self._matched_prompt = match.group().encode('utf-8')
                     if not errored_response:
                         return True
 
